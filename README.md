@@ -66,11 +66,11 @@ itemStream.close({ toy: "He-Man" });
 
 Serializes `input` into an XML string (or a `PassThrough` stream when `options.stream` is `true` or an unclosed `element()` is used). Passing a `boolean` or `string` as the second argument is shorthand for `{ indent: options }`.
 
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `indent` | `boolean \| string` | `false` | Pretty-print with indentation (`true` uses 4 spaces, or pass a custom string like `"\t"`). |
-| `stream` | `boolean` | `false` | Always return a Node.js `PassThrough` stream. |
-| `declaration` | `XmlDeclaration` | `undefined` | Prepend `<?xml version="1.0" ...?>` with optional `encoding` (default `"UTF-8"`) and `standalone`. |
+| Option        | Type                | Default     | Description                                                                                        |
+| ------------- | ------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
+| `indent`      | `boolean \| string` | `false`     | Pretty-print with indentation (`true` uses 4 spaces, or pass a custom string like `"\t"`).         |
+| `stream`      | `boolean`           | `false`     | Always return a Node.js `PassThrough` stream.                                                      |
+| `declaration` | `XmlDeclaration`    | `undefined` | Prepend `<?xml version="1.0" ...?>` with optional `encoding` (default `"UTF-8"`) and `standalone`. |
 
 ### Special Keys
 
@@ -79,8 +79,10 @@ Serializes `input` into an XML string (or a `PassThrough` stream when `options.s
 - `null` / `[]`: Renders a self-closing tag (`<tag/>`).
 
 ### `element(...input: unknown[]): XmlElementHandle`
+
 Aliases: `xml.element`, `xml.Element`
 
 Creates a deferred element handle for streaming:
+
 - `handle.push(input)` - format and flush a child element to the parent stream.
 - `handle.close(input?)` - optionally push a final child element and close the tag.
