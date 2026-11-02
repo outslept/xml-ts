@@ -11,7 +11,7 @@ export interface XmlDeclaration {
 export interface XmlOptions {
   indent?: string | boolean;
   stream?: boolean;
-  declaration?: XmlDeclaration;
+  declaration?: XmlDeclaration | boolean;
 }
 
 export type XmlOptionsInput = XmlOptions | string | boolean | null;
@@ -62,111 +62,119 @@ export function element(...input: unknown[]): XmlElementHandle {
   return self;
 }
 
-export const xml = Object.assign(
-  function xml(input: unknown, options: XmlOptionsInput = {}): string | PassThrough {
-    const settings: XmlOptions =
-      options !== null && typeof options === "object"
-        ? options
-        : { indent: options as string | boolean | undefined };
+export function xml(input: unknown, options: XmlOptions & { stream: true }): PassThrough;
+export function xml(
+  input?: unknown,
+  options?: (XmlOptions & { stream?: false | undefined }) | string | boolean | null,
+): string;
+export function xml(input?: unknown, options?: XmlOptionsInput): string | PassThrough;
 
-    let stream: PassThrough | null = settings.stream ? new PassThrough() : null;
-    let output = "";
-    let interrupted = false;
-    let instant = true;
+export function xml(input?: unknown, options: XmlOptionsInput = {}): string | PassThrough {
+  const settings: XmlOptions =
+    options !== null && typeof options === "object"
+      ? options
+      : { indent: options as string | boolean | undefined };
 
-    const indent =
-      settings.indent === true
-        ? DEFAULT_INDENT
-        : typeof settings.indent === "string"
-          ? settings.indent
-          : "";
+  let stream: PassThrough | null = settings.stream ? new PassThrough({ encoding: "utf8" }) : null;
+  let output = "";
+  let interrupted = false;
+  let instant = true;
 
-    const delay = (callback: () => void): void => {
-      if (instant) {
-        queueMicrotask(callback);
-      } else {
-        callback();
-      }
-    };
+  const indent =
+    settings.indent === true
+      ? DEFAULT_INDENT
+      : typeof settings.indent === "string"
+        ? settings.indent
+        : "";
 
-    const append: Append = (interrupt, out) => {
-      if (out !== undefined) {
-        output += out as string;
-      }
+  const delay = (callback: () => void): void => {
+    if (instant) {
+      queueMicrotask(callback);
+    } else {
+      callback();
+    }
+  };
 
-      if (interrupt && !interrupted) {
-        stream ??= new PassThrough();
-        interrupted = true;
-      }
+  const append: Append = (interrupt, out) => {
+    if (out !== undefined) {
+      output += out as string;
+    }
 
-      if (interrupt && interrupted) {
-        const data = output;
-        output = "";
+    if (interrupt && !interrupted) {
+      stream ??= new PassThrough({ encoding: "utf8" });
+      interrupted = true;
+    }
 
-        delay(() => {
-          stream?.write(data);
-        });
-      }
-    };
-
-    const add = (value: unknown, last?: () => void): void => {
-      format(append, resolve(value, indent, indent ? 1 : 0), last);
-    };
-
-    const end = (): void => {
-      if (!stream) return;
-
+    if (interrupt && interrupted) {
       const data = output;
       output = "";
 
       delay(() => {
         stream?.write(data);
-        stream?.end();
       });
+    }
+  };
+
+  const add = (value: unknown, last?: () => void): void => {
+    format(append, resolve(value, indent, indent ? 1 : 0), last);
+  };
+
+  const end = (): void => {
+    if (!stream) return;
+
+    const data = output;
+    output = "";
+
+    delay(() => {
+      stream?.write(data);
+      stream?.end();
+    });
+  };
+
+  const addXmlDeclaration = (declaration: XmlDeclaration | true): void => {
+    const decl = typeof declaration === "object" ? declaration : {};
+    const attributes: Record<string, unknown> = {
+      version: "1.0",
+      encoding: decl.encoding || "UTF-8",
     };
 
-    const addXmlDeclaration = (declaration: XmlDeclaration): void => {
-      const attributes: Record<string, unknown> = {
-        version: "1.0",
-        encoding: declaration.encoding || "UTF-8",
-      };
+    if (decl.standalone) {
+      attributes.standalone = decl.standalone;
+    }
 
-      if (declaration.standalone) {
-        attributes.standalone = declaration.standalone;
-      }
+    add({ "?xml": { _attr: attributes } });
+    output = output.replace("/>", "?>");
+  };
 
-      add({ "?xml": { _attr: attributes } });
-      output = output.replace("/>", "?>");
-    };
+  queueMicrotask(() => {
+    instant = false;
+  });
 
-    queueMicrotask(() => {
-      instant = false;
+  if (settings.declaration) {
+    addXmlDeclaration(settings.declaration);
+  }
+
+  if (Array.isArray(input)) {
+    let hasFinalValue = false;
+
+    input.forEach((value, index) => {
+      const isLast = index === input.length - 1;
+      if (isLast) hasFinalValue = true;
+      add(value, isLast ? end : undefined);
     });
 
-    if (settings.declaration) {
-      addXmlDeclaration(settings.declaration);
+    if (!hasFinalValue) {
+      end();
     }
+  } else {
+    add(input, end);
+  }
 
-    if (Array.isArray(input)) {
-      let hasFinalValue = false;
+  return stream ?? output;
+}
 
-      input.forEach((value, index) => {
-        const isLast = index === input.length - 1;
-        if (isLast) hasFinalValue = true;
-        add(value, isLast ? end : undefined);
-      });
-
-      if (!hasFinalValue) {
-        end();
-      }
-    } else {
-      add(input, end);
-    }
-
-    return stream ?? output;
-  },
-  { element, Element: element },
-);
+xml.element = element;
+xml.Element = element;
 
 export default xml;
 
