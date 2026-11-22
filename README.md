@@ -1,88 +1,83 @@
-# xml-ts
+# xml
 
-TypeScript ESM port of [`xml`](https://github.com/dylang/node-xml) for generating XML strings and Node.js streams from plain objects, with support for attributes, CDATA, indentation, and async streaming elements.
+Zero-dependency, runtime-agnostic XML serializer for JavaScript and TypeScript.
 
 ## Usage
 
-### Basic XML, Attributes & CDATA
-
-Each XML element is represented as a single-key object `{ tagName: content }`:
-
 ```ts
-import { xml } from "xml-ts";
+import { renderXML } from "xml";
 
-const output = xml(
+const xml = renderXML(
   {
-    toys: [
-      { _attr: { Decade: "80s", Locale: "US" } },
-      { toy: "Transformers" },
-      { toy: [{ _attr: { knowing: "half the battle" } }, "GI Joe"] },
-      {
-        toy: [
-          { name: "He-Man" },
-          { description: { _cdata: "<strong>Master of the Universe!</strong>" } },
+    rss: {
+      "@version": "2.0",
+      channel: {
+        title: "Feed",
+        link: "https://example.com",
+        item: [
+          { title: "First", $cdata: "Some <b>HTML</b>" },
+          { title: "Second", "@featured": true, "@draft": undefined },
         ],
       },
-    ],
+    },
   },
-  { indent: "  ", declaration: { encoding: "UTF-8", standalone: "yes" } },
+  { declaration: true, indent: true },
 );
 ```
 
 Output:
 
 ```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<toys Decade="80s" Locale="US">
-  <toy>Transformers</toy>
-  <toy knowing="half the battle">GI Joe</toy>
-  <toy>
-    <name>He-Man</name>
-    <description><![CDATA[<strong>Master of the Universe!</strong>]]></description>
-  </toy>
-</toys>
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Feed</title>
+    <link>https://example.com</link>
+    <item><![CDATA[Some <b>HTML</b>]]><title>First</title></item>
+    <item featured="true">
+      <title>Second</title>
+    </item>
+  </channel>
+</rss>
 ```
 
-### Streaming with `xml.element()`
+## Syntax
 
-Use `element()` (or `{ stream: true }`) to return a Node.js `PassThrough` stream and push child nodes asynchronously:
+| Input                                            | Output                         |
+| ------------------------------------------------ | ------------------------------ |
+| `{ tag: "text" }`                                | `<tag>text</tag>`              |
+| `{ tag: "" }`                                    | `<tag></tag>`                  |
+| `{ tag: null }` or `{ tag: {} }`                 | `<tag/>`                       |
+| `{ tag: undefined }`                             | _(omitted)_                    |
+| `{ tag: [1, 2] }`                                | `<tag>1</tag><tag>2</tag>`     |
+| `[{ a: 1 }, { b: 2 }, { a: 3 }]`                 | `<a>1</a><b>2</b><a>3</a>`     |
+| `{ tag: { "@id": 1, $text: "hi" } }`             | `<tag id="1">hi</tag>`         |
+| `{ tag: { $attr: { id: 1, skip: undefined } } }` | `<tag id="1"/>`                |
+| `{ tag: { $cdata: "1 < 2" } }`                   | `<tag><![CDATA[1 < 2]]></tag>` |
+
+`null` and `undefined` attribute values are ignored automatically.
+
+## Options
 
 ```ts
-import { xml, element } from "xml-ts";
+renderXML(node, {
+  // true = 2 spaces, number = N spaces, string = custom indent (e.g. "\t")
+  indent: true,
 
-const itemStream = element({ _attr: { Decade: "80s" } });
-const stream = xml({ toys: itemStream }, { stream: true, indent: true });
-
-stream.pipe(process.stdout);
-
-itemStream.push({ toy: "Transformers" });
-itemStream.push({ toy: "GI Joe" });
-itemStream.close({ toy: "He-Man" });
+  // true or { version?: string, encoding?: string, standalone?: boolean | "yes" | "no" }
+  declaration: { encoding: "UTF-8", standalone: true },
+});
 ```
 
-## API
+## Utilities
 
-### `xml(input: unknown, options?: XmlOptionsInput): string | PassThrough`
+```ts
+import { escapeXML } from "xml";
 
-Serializes `input` into an XML string (or a `PassThrough` stream when `options.stream` is `true` or an unclosed `element()` is used). Passing a `boolean` or `string` as the second argument is shorthand for `{ indent: options }`.
+escapeXML(`a & b < c > "d" 'e'`);
+// => "a &amp; b &lt; c &gt; &quot;d&quot; &apos;e&apos;"
+```
 
-| Option        | Type                | Default     | Description                                                                                        |
-| ------------- | ------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `indent`      | `boolean \| string` | `false`     | Pretty-print with indentation (`true` uses 4 spaces, or pass a custom string like `"\t"`).         |
-| `stream`      | `boolean`           | `false`     | Always return a Node.js `PassThrough` stream.                                                      |
-| `declaration` | `XmlDeclaration`    | `undefined` | Prepend `<?xml version="1.0" ...?>` with optional `encoding` (default `"UTF-8"`) and `standalone`. |
+## License
 
-### Special Keys
-
-- `_attr`: Object of key-value pairs rendered as XML attributes on the element.
-- `_cdata`: String wrapped in `<![CDATA[...]]>` (automatically escapes nested `]]>` sequences).
-- `null` / `[]`: Renders a self-closing tag (`<tag/>`).
-
-### `element(...input: unknown[]): XmlElementHandle`
-
-Aliases: `xml.element`, `xml.Element`
-
-Creates a deferred element handle for streaming:
-
-- `handle.push(input)` - format and flush a child element to the parent stream.
-- `handle.close(input?)` - optionally push a final child element and close the tag.
+MIT
