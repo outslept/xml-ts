@@ -1,344 +1,148 @@
-import { PassThrough } from "node:stream";
-import escapeForXML from "./escapeForXML.js";
+const XML_ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  '"': "&quot;",
+  "'": "&apos;",
+  "<": "&lt;",
+  ">": "&gt;",
+};
 
-const DEFAULT_INDENT = "    ";
+export type XMLPrimitive = string | number | boolean | null | undefined;
 
-export interface XmlDeclaration {
+export interface XMLObject {
+  [key: `@${string}`]: XMLPrimitive;
+  $attr?: Record<string, XMLPrimitive>;
+  $text?: XMLPrimitive;
+  $cdata?: string;
+  [tag: string]: XMLNode;
+}
+
+export type XMLNode = XMLPrimitive | XMLObject | XMLNode[];
+
+export interface XMLDeclaration {
+  version?: string;
   encoding?: string;
-  standalone?: string | boolean;
+  standalone?: boolean | "yes" | "no";
 }
 
-export interface XmlOptions {
-  indent?: string | boolean;
-  stream?: boolean;
-  declaration?: XmlDeclaration | boolean;
+export interface RenderXMLOptions {
+  indent?: boolean | number | string;
+  declaration?: boolean | XMLDeclaration;
 }
 
-export type XmlOptionsInput = XmlOptions | string | boolean | null;
-
-export interface XmlElementData {
-  name: string | undefined;
-  interrupt: XmlElementHandle | false;
-  attributes: string[];
-  content: unknown[];
-  icount: number;
-  indents: string;
-  indent: string;
+export function escapeXML(value: string): string {
+  return value.replace(/[&"'<>]/g, (char) => XML_ESCAPE_MAP[char]!);
 }
 
-export interface XmlElementHandle {
-  _elem: XmlElementData;
-  append?: (interrupt: boolean, output?: unknown) => void;
-  end?: () => void;
-  push(input: unknown): void;
-  close(input?: unknown): void;
-}
+export function renderXML(node?: XMLNode, options: RenderXMLOptions = {}): string {
+  const indent = resolveIndent(options.indent);
+  const parts: string[] = [];
 
-type Append = (interrupt: boolean, output?: unknown) => void;
-
-export function element(...input: unknown[]): XmlElementHandle {
-  const self: XmlElementHandle = {
-    _elem: resolve(input),
-
-    push(input: unknown) {
-      const append = this.append;
-      if (!append) {
-        throw new Error("not assigned to a parent!");
-      }
-
-      const { indent, icount } = this._elem;
-
-      format(append, resolve(input, indent, icount + (indent ? 1 : 0)), () => append(true));
-    },
-
-    close(input?: unknown) {
-      if (input !== undefined) {
-        this.push(input);
-      }
-      this.end?.();
-    },
-  };
-
-  return self;
-}
-
-export function xml(input: unknown, options: XmlOptions & { stream: true }): PassThrough;
-export function xml(
-  input?: unknown,
-  options?: (XmlOptions & { stream?: false | undefined }) | string | boolean | null,
-): string;
-export function xml(input?: unknown, options?: XmlOptionsInput): string | PassThrough;
-
-export function xml(input?: unknown, options: XmlOptionsInput = {}): string | PassThrough {
-  const settings: XmlOptions =
-    options !== null && typeof options === "object"
-      ? options
-      : { indent: options as string | boolean | undefined };
-
-  let stream: PassThrough | null = settings.stream ? new PassThrough({ encoding: "utf8" }) : null;
-  let output = "";
-  let interrupted = false;
-  let instant = true;
-
-  const indent =
-    settings.indent === true
-      ? DEFAULT_INDENT
-      : typeof settings.indent === "string"
-        ? settings.indent
-        : "";
-
-  const delay = (callback: () => void): void => {
-    if (instant) {
-      queueMicrotask(callback);
-    } else {
-      callback();
-    }
-  };
-
-  const append: Append = (interrupt, out) => {
-    if (out !== undefined) {
-      output += out as string;
-    }
-
-    if (interrupt && !interrupted) {
-      stream ??= new PassThrough({ encoding: "utf8" });
-      interrupted = true;
-    }
-
-    if (interrupt && interrupted) {
-      const data = output;
-      output = "";
-
-      delay(() => {
-        stream?.write(data);
-      });
-    }
-  };
-
-  const add = (value: unknown, last?: () => void): void => {
-    format(append, resolve(value, indent, indent ? 1 : 0), last);
-  };
-
-  const end = (): void => {
-    if (!stream) return;
-
-    const data = output;
-    output = "";
-
-    delay(() => {
-      stream?.write(data);
-      stream?.end();
-    });
-  };
-
-  const addXmlDeclaration = (declaration: XmlDeclaration | true): void => {
-    const decl = typeof declaration === "object" ? declaration : {};
-    const attributes: Record<string, unknown> = {
-      version: "1.0",
-      encoding: decl.encoding || "UTF-8",
-    };
-
-    if (decl.standalone) {
-      attributes.standalone = decl.standalone;
-    }
-
-    add({ "?xml": { _attr: attributes } });
-    output = output.replace("/>", "?>");
-  };
-
-  queueMicrotask(() => {
-    instant = false;
-  });
-
-  if (settings.declaration) {
-    addXmlDeclaration(settings.declaration);
+  if (options.declaration) {
+    parts.push(renderDeclaration(options.declaration));
   }
 
-  if (Array.isArray(input)) {
-    let hasFinalValue = false;
+  parts.push(...renderNode(node, indent, 0));
 
-    input.forEach((value, index) => {
-      const isLast = index === input.length - 1;
-      if (isLast) hasFinalValue = true;
-      add(value, isLast ? end : undefined);
-    });
-
-    if (!hasFinalValue) {
-      end();
-    }
-  } else {
-    add(input, end);
-  }
-
-  return stream ?? output;
+  return parts.join(indent ? "\n" : "");
 }
 
-xml.element = element;
-xml.Element = element;
+export { renderXML as xml };
+export default renderXML;
 
-export default xml;
+function resolveIndent(indent?: boolean | number | string): string {
+  if (indent === true) return "  ";
+  if (typeof indent === "number") return " ".repeat(Math.max(0, indent));
+  if (typeof indent === "string") return indent;
+  return "";
+}
 
-function resolve(data: unknown, indent = "", indentCount = 0): XmlElementData {
-  const indentSpaces = createIndent(indent, indentCount);
-  let name: string | undefined;
-  let values = data;
-  let interrupt: XmlElementHandle | false = false;
+function renderDeclaration(declaration: boolean | XMLDeclaration): string {
+  const decl = typeof declaration === "object" ? declaration : {};
+  const version = escapeXML(decl.version ?? "1.0");
+  const encoding = escapeXML(decl.encoding ?? "UTF-8");
+  const standalone =
+    decl.standalone === true ? "yes" : decl.standalone === false ? "no" : decl.standalone;
 
-  if (data !== null && typeof data === "object") {
-    const keys = Object.keys(data);
-    name = keys[0];
-    values = (data as Record<string, unknown>)[name as string];
+  return `<?xml version="${version}" encoding="${encoding}"${
+    standalone ? ` standalone="${escapeXML(standalone)}"` : ""
+  }?>`;
+}
 
-    if (isElementHandle(values)) {
-      const elem = values._elem;
-      elem.name = name;
-      elem.icount = indentCount;
-      elem.indent = indent;
-      elem.indents = indentSpaces;
-      elem.interrupt = values;
-      return elem;
-    }
+function renderNode(node: XMLNode, indent: string, depth: number): string[] {
+  if (node === undefined || node === null) {
+    return [];
+  }
+  if (typeof node === "string" || typeof node === "number" || typeof node === "boolean") {
+    const text = escapeXML(String(node));
+    return text ? [indent.repeat(depth) + text] : [];
+  }
+  if (Array.isArray(node)) {
+    return node.flatMap((item) => renderNode(item, indent, depth));
+  }
+  return Object.entries(node).flatMap(([tag, value]) => renderTag(tag, value, indent, depth));
+}
+
+function renderTag(name: string, value: XMLNode, indent: string, depth: number): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => renderTag(name, item, indent, depth));
   }
 
-  const attributes: string[] = [];
-  const content: unknown[] = [];
+  const pad = indent.repeat(depth);
 
-  const getAttributes = (value: unknown): void => {
-    for (const key of Object.keys(Object(value))) {
-      attributes.push(attribute(key, (value as Record<string, unknown>)[key]));
-    }
-  };
+  if (value === null) {
+    return [`${pad}<${name}/>`];
+  }
+  if (typeof value !== "object") {
+    return [`${pad}<${name}>${escapeXML(String(value))}</${name}>`];
+  }
 
-  if (values !== null && typeof values === "object") {
-    const record = values as Record<string, unknown>;
+  const attrs: string[] = [];
+  const inline: string[] = [];
+  const children: string[] = [];
+  let hasInline = false;
 
-    if (record._attr) {
-      getAttributes(record._attr);
-    }
-
-    if (record._cdata) {
-      const cdata = record._cdata as string;
-      content.push(("<![CDATA[" + cdata).replace(/\]\]>/g, "]]]]><![CDATA[>") + "]]>");
-    }
-
-    if (Array.isArray(values)) {
-      let isStringContent = false;
-      content.push("");
-
-      values.forEach((value: unknown) => {
-        if (value !== null && typeof value === "object") {
-          const childName = Object.keys(value)[0];
-
-          if (childName === "_attr") {
-            getAttributes((value as Record<string, unknown>)._attr);
-          } else {
-            content.push(resolve(value, indent, indentCount + 1));
-          }
-        } else {
-          content.pop();
-          isStringContent = true;
-          content.push(escapeForXML(value));
+  for (const [key, val] of Object.entries(value)) {
+    if (key === "$attr" && val !== null && typeof val === "object" && !Array.isArray(val)) {
+      for (const [attrName, attrVal] of Object.entries(val)) {
+        if (attrVal !== undefined && attrVal !== null) {
+          attrs.push(`${attrName}="${escapeXML(String(attrVal))}"`);
         }
-      });
-
-      if (!isStringContent) {
-        content.push("");
       }
+    } else if (key.startsWith("@")) {
+      if (val !== undefined && val !== null) {
+        attrs.push(`${key.slice(1)}="${escapeXML(String(val))}"`);
+      }
+    } else if (key === "$text") {
+      if (val !== undefined && val !== null) {
+        hasInline = true;
+        inline.push(escapeXML(String(val)));
+      }
+    } else if (key === "$cdata") {
+      if (val !== undefined && val !== null) {
+        hasInline = true;
+        inline.push(`<![CDATA[${String(val).replaceAll("]]>", "]]]]><![CDATA[>")}]]>`);
+      }
+    } else {
+      children.push(...renderTag(key, val as XMLNode, indent, depth + 1));
     }
-  } else if (values !== null) {
-    content.push(escapeForXML(values));
   }
 
-  return {
-    name,
-    interrupt,
-    attributes,
-    content,
-    icount: indentCount,
-    indents: indentSpaces,
-    indent,
-  };
-}
+  const attrString = attrs.length ? ` ${attrs.join(" ")}` : "";
 
-function createIndent(character: string, count: number): string {
-  return character.repeat(Math.max(0, count - 1));
-}
-
-function isElementHandle(value: unknown): value is XmlElementHandle {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "_elem" in value &&
-    Boolean((value as { _elem?: unknown })._elem)
-  );
-}
-
-function format(append: Append, input: unknown, end?: () => void): void {
-  if (input === null || typeof input !== "object") {
-    append(false, input);
-    end?.();
-    return;
-  }
-
-  const elem = input as XmlElementData;
-  const len = elem.interrupt ? 1 : elem.content.length;
-  let contentIndex = 0;
-
-  function proceed(): void {
-    while (contentIndex < elem.content.length) {
-      const value = elem.content[contentIndex++];
-
-      if (value === undefined) continue;
-      if (interrupt(value)) return;
-
-      format(append, value);
+  if (children.length > 0) {
+    if (hasInline) {
+      children.unshift(indent.repeat(depth + 1) + inline.join(""));
     }
-
-    append(
-      false,
-      (len > 1 ? elem.indents : "") +
-        (elem.name ? `</${elem.name}>` : "") +
-        (elem.indent && !end ? "\n" : ""),
-    );
-
-    end?.();
+    const sep = indent ? "\n" : "";
+    return [`${pad}<${name}${attrString}>${sep}${children.join(sep)}${sep}${pad}</${name}>`];
   }
 
-  function interrupt(value: unknown): boolean {
-    if (value === null || typeof value !== "object") return false;
-
-    const child = value as XmlElementData;
-    if (!child.interrupt) return false;
-
-    const handle = child.interrupt;
-    handle.append = append;
-    handle.end = proceed;
-    child.interrupt = false;
-    append(true);
-
-    return true;
+  if (hasInline) {
+    return [`${pad}<${name}${attrString}>${inline.join("")}</${name}>`];
   }
 
-  append(
-    false,
-    elem.indents +
-      (elem.name ? `<${elem.name}` : "") +
-      (elem.attributes.length ? ` ${elem.attributes.join(" ")}` : "") +
-      (len ? (elem.name ? ">" : "") : elem.name ? "/>" : "") +
-      (elem.indent && len > 1 ? "\n" : ""),
-  );
-
-  if (!len) {
-    append(false, elem.indent ? "\n" : "");
-    end?.();
-    return;
-  }
-
-  if (!interrupt(elem)) {
-    proceed();
-  }
-}
-
-function attribute(key: string, value: unknown): string {
-  return key + '="' + (escapeForXML(value) as string) + '"';
+  return [`${pad}<${name}${attrString}/>`];
 }
