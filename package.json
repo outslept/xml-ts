@@ -32,7 +32,10 @@
     "prepare": "vp config"
   },
   "devDependencies": {
+    "@types/jstoxml": "^5.0.0",
     "@types/node": "^26.6.5",
+    "@types/xml": "^1.0.11",
+    "@types/xml2js": "^0.4.14",
     "fast-xml-parser": "^5.12.1",
     "jstoxml": "^7.1.1",
     "mitata": "^1.0.34",
